@@ -43,14 +43,64 @@
 		
 */
 
-#include <linux/init.h>
 #include <linux/module.h>
-#include <linux/slab.h> /* kmalloc() */
-#include <linux/fs.h> /* filesystem operations */
-#include <linux/timer.h> /* timer functionality */
-#include <linux/uaccess.h> /* copy_to/from_user */
+#include <linux/kernel.h>
+#include <linux/timer.h>
+#include <linux/fs.h>			// filesystem operations
+#include <linux/uaccess.h>		// copy_to/from_user
+#include <linux/gpio.h>
+#include <linux/cdev.h>
+#include <linux/device.h>
+#include <linux/interrupt.h>
 
 MODULE_LICENSE("Dual BSD/GPL");
+MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("Traffic light kernel module");
 
-#define MAX_TIMERS 1
-#define MYTIMER_MAJOR 61
+#define RED 67
+#define YELLOW 68
+#define GREEN 44
+#define BTN_0 26	// Mode switch button
+#define BTN_1 46	// Pedestrian call button
+#define MAJOR 61
+
+/* ======================= Global variables ======================= */
+
+
+/* =======================  ======================= */
+static irqreturn_t btn_0_irq_handler(int irq, void *dev_id) {
+
+}
+
+static irqreturn_t btn_1_irq_handler(int irq, void *dev_id) {
+
+}
+
+static void mytraffic_timer_callback(struct timer_lists *t) {
+
+}
+
+static ssize_t mytraffic_read(struct file *file, char __user *buf, size_t count, loff_t *offset) {
+
+}
+
+static ssize_t mytraffic_write(struct file *file, const char __user *buf, size_t count, loff_t *offset) {
+
+}
+
+static struct file_operations mytraffic_fops = {
+	.owner = THIS_MODULE,
+	.read = mytraffic_read,
+	.write = mytraffic_write,
+}
+
+static int __init mytraffic_init(void) {
+
+}
+
+static int __exit mytraffic_exit(void) {
+
+}
+
+module_init(mytraffic_init);
+module_exit(mytraffic_exit);
