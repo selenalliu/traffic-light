@@ -96,7 +96,7 @@ typedef struct {
 
 opmode_t state_transition_table[2][3] = { // current mode vs. event
                         /* NORMAL_MODE       FLASHING_RED      FLASHING_YELLOW */
-    /* EVENT_BTN_0_PRESS */ {FLASHING_RED,   NORMAL_MODE,    FLASHING_YELLOW},
+    /* EVENT_BTN_0_PRESS */ {FLASHING_RED,   FLASHING_YELLOW,    NORMAL_MODE},
     /* EVENT_TIMER_EXPIRE */ {NORMAL_MODE,   FLASHING_RED,   FLASHING_YELLOW}
 };
 
