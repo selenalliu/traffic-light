@@ -94,14 +94,14 @@ typedef struct {
     bool pedestrian_present;
 } traffic_light_t;
 
-mode_t state_transition_table[3][2] = { // current mode vs. event
+mode_t state_transition_table[2][3] = { // current mode vs. event
                         /* NORMAL_MODE       FLASHING_RED      FLASHING_YELLOW */
     /* EVENT_BTN_0_PRESS */ {FLASHING_RED,   NORMAL_MODE,    FLASHING_YELLOW},
     /* EVENT_TIMER_EXPIRE */ {NORMAL_MODE,   FLASHING_RED,   FLASHING_YELLOW}
 };
 
 /* ======================= Function Declarations/Definitions ======================= */
-static int gpio_init(void); // GPIO and IRQ initialization function
+static int gpio_init(traffic_light_t *light); // GPIO and IRQ initialization function
 void set_light_status(traffic_light_t *light); // helper function to set GPIOs based on light status
 
 // state handlers
@@ -213,7 +213,7 @@ static int __init mytraffic_init(void) {
     }
     
     // set up GPIOs
-    if (gpio_init() < 0) {
+    if (gpio_init(light) < 0) {
         printk(KERN_ERR "Failed to initialize GPIOs\n");
         kfree(light);
         unregister_chrdev(MAJOR, "mytraffic");
@@ -247,7 +247,12 @@ static int __exit mytraffic_exit(void) {
     unregister_chrdev(MAJOR, "mytraffic");
 }
 
-static int gpio_init(void) {
+static int gpio_init(traffic_light_t *light) {
+    if (!light) {
+        printk(KERN_ERR "Invalid traffic light pointer\n");
+        return -1;
+    }
+    
     int result = 0; // for error checking
 
     // set up RED GPIO
@@ -294,7 +299,7 @@ static int gpio_init(void) {
     }
     // set up BTN_0 IRQ
     btn_0_irq = gpio_to_irq(BTN_0);
-    if (request_irq(btn_0_irq, btn_0_irq_handler, IRQF_TRIGGER_RISING, "btn_0_irq", NULL) != 0) {
+    if (request_irq(btn_0_irq, btn_0_irq_handler, IRQF_TRIGGER_RISING, "btn_0_irq", light) != 0) {
         printk(KERN_ERR "Failed to request IRQ %d\n", btn_0_irq);
         result = -1;
     }
@@ -311,7 +316,7 @@ static int gpio_init(void) {
     }
     // set up BTN_1 IRQ
     btn_1_irq = gpio_to_irq(BTN_1);
-    if (request_irq(btn_1_irq, btn_1_irq_handler, IRQF_TRIGGER_RISING, "btn_1_irq", NULL) != 0) {
+    if (request_irq(btn_1_irq, btn_1_irq_handler, IRQF_TRIGGER_RISING, "btn_1_irq", light) != 0) {
         printk(KERN_ERR "Failed to request IRQ %d\n", btn_1_irq);
         result = -1;
     }
