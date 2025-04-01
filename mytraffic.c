@@ -126,7 +126,7 @@ void handle_flashing_red(traffic_light_t *light) {
     light->status.red = !light->status.red; // toggle red light
     light->status.yellow = false;
     light->status.green = false;
-    mod_timer(&light->timer, jiffies + msecs_to_jiffies(HZ / light->cycle_rate));
+    mod_timer(&light->timer, jiffies + (HZ / light->cycle_rate));
     set_light_status(light);
 }
 
@@ -134,7 +134,7 @@ void handle_flashing_yellow(traffic_light_t *light) {
     light->status.yellow = !light->status.yellow; // toggle yellow light
     light->status.red = false;
     light->status.green = false;
-    mod_timer(&light->timer, jiffies + msecs_to_jiffies(HZ / light->cycle_rate));
+    mod_timer(&light->timer, jiffies + (HZ / light->cycle_rate));
     set_light_status(light);
 }
 
@@ -143,7 +143,7 @@ void handle_lightbulb_check(traffic_light_t *light) {
     light->status.red = true;
     light->status.yellow = true;
     light->status.green = true;
-    mod_timer(&light->timer, jiffies + msecs_to_jiffies(5 * HZ / light->cycle_rate)); // 5 cycles for lightbulb check
+    mod_timer(&light->timer, jiffies + (5 * HZ / light->cycle_rate)); // 5 cycles for lightbulb check
     set_light_status(light);
 }
 void handle_event(traffic_light_t *light, event_t event) {
