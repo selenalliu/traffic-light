@@ -72,7 +72,7 @@ typedef enum {
     NORMAL_MODE,
     FLASHING_RED,
     FLASHING_YELLOW
-} mode_t;
+} opmode_t;
 
 typedef enum {
     EVENT_BTN_0_PRESS,
@@ -88,13 +88,13 @@ typedef struct {
 } light_status_t;
 typedef struct {
     struct timer_list timer; // timer for traffic light cycles
-    mode_t mode; // current operational mode
+    opmode_t mode; // current operational mode
     light_status_t status; // current status of each light
     int cycle_rate; // in Hz
     bool pedestrian_present;
 } traffic_light_t;
 
-mode_t state_transition_table[2][3] = { // current mode vs. event
+opmode_t state_transition_table[2][3] = { // current mode vs. event
                         /* NORMAL_MODE       FLASHING_RED      FLASHING_YELLOW */
     /* EVENT_BTN_0_PRESS */ {FLASHING_RED,   NORMAL_MODE,    FLASHING_YELLOW},
     /* EVENT_TIMER_EXPIRE */ {NORMAL_MODE,   FLASHING_RED,   FLASHING_YELLOW}
@@ -147,7 +147,7 @@ void handle_lightbulb_check(traffic_light_t *light) {
     set_light_status(light);
 }
 void handle_event(traffic_light_t *light, event_t event) {
-    mode_t next_mode = state_transition_table[light->mode][event]; // get next mode based on current mode and event
+    opmode_t next_mode = state_transition_table[light->mode][event]; // get next mode based on current mode and event
     light->mode = next_mode; // update mode
     switch (next_mode) {
         case NORMAL_MODE:
@@ -195,7 +195,7 @@ static struct file_operations mytraffic_fops = {
 	.write = mytraffic_write
 };
 
-static int __init mytraffic_init(void) {
+static int mytraffic_init(void) {
     // register char device
     int result;
     result = register_chrdev(MAJOR, "mytraffic", &mytraffic_fops);
@@ -233,7 +233,7 @@ static int __init mytraffic_init(void) {
     return 0;
 }
 
-static int __exit mytraffic_exit(void) {
+static void mytraffic_exit(void) {
     // free IRQs and GPIOs
     free_irq(btn_1_irq, NULL);
     free_irq(btn_0_irq, NULL);
