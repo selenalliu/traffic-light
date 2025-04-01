@@ -1,4 +1,6 @@
 # traffic-light
 
 Useful links/resources:
-= Example of using GPIO interrupts in a Linux kernel module: https://github.com/Johannes4Linux/Linux_Driver_Tutorial_legacy/blob/main/11_gpio_irq/gpio_irq.c
+= Example of using GPIO interrupts in a Linux kernel module + accompanying video: 
+  - https://github.com/Johannes4Linux/Linux_Driver_Tutorial_legacy/blob/main/11_gpio_irq/gpio_irq.c
+  - https://www.youtube.com/watch?v=oCTNuwO9_FA
