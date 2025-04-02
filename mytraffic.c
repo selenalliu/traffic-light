@@ -147,7 +147,7 @@ void handle_lightbulb_check(traffic_light_t *light) {
     set_light_status(light);
 }
 void handle_event(traffic_light_t *light, event_t event) {
-    opmode_t next_mode = state_transition_table[light->mode][event]; // get next mode based on current mode and event
+    opmode_t next_mode = state_transition_table[event][light->mode]; // get next mode based on current mode and event
     light->mode = next_mode; // update mode
     switch (next_mode) {
         case NORMAL_MODE:
