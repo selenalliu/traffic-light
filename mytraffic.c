@@ -100,7 +100,7 @@ typedef struct {
 
 mode_t state_transition_table[4][5] = { // current mode vs. event
                         /* NORMAL_MODE       FLASHING_RED      FLASHING_YELLOW      PEDESTRIAN_MODE     LIGHTBULB_CHECK*/
-    /* EVENT_BTN_0_PRESS */ {FLASHING_RED,   NORMAL_MODE,    FLASHING_YELLOW,   PEDESTRIAN_MODE,    NORMAL_MODE},
+    /* EVENT_BTN_0_PRESS */ {FLASHING_RED,   FLASHING_YELLOW,    NORMAL_MODE,   PEDESTRIAN_MODE,    NORMAL_MODE},
     /* EVENT_BTN_1_PRESS */ {PEDESTRIAN_MODE,  FLASHING_RED,  FLASHING_YELLOW,   PEDESTRIAN_MODE,   NORMAL_MODE}, // only go to pedestrian mode from normal
     /* EVENT_BOTH_BTNS_PRESS */ {LIGHTBULB_CHECK,   LIGHTBULB_CHECK,    LIGHTBULB_CHECK,    LIGHTBULB_CHECK,    LIGHTBULB_CHECK},
     /* EVENT_TIMER_EXPIRE */ {NORMAL_MODE,   FLASHING_RED,   FLASHING_YELLOW,   NORMAL_MODE,    LIGHTBULB_CHECK} // pedestrian mode will return to normal after timer expires, lightbulb check ignores any existing timers/their expirations
@@ -112,6 +112,7 @@ void set_light_status(traffic_light_t *light); // helper function to set GPIOs b
 
 // state handlers
 void handle_normal_mode(traffic_light_t *light) {
+    printk(KERN_INFO "Handling normal mode\n"); // temp
     if (light->status.green) {
         light->status.green = false;
         light->status.yellow = true;
@@ -124,11 +125,15 @@ void handle_normal_mode(traffic_light_t *light) {
         light->status.red = false;
         light->status.green = true;
         mod_timer(&light->timer, jiffies + (3 * HZ / light->cycle_rate)); // green for 3 cycles
+    } else { // all lights are off when switching modes
+        light->status.green = true; // default to green if all lights are off
+        mod_timer(&light->timer, jiffies + (3 * HZ / light->cycle_rate)); // green for 3 cycles
     }
     set_light_status(light); // update GPIOs based on current light status
 }
 
 void handle_flashing_red(traffic_light_t *light) {
+    printk(KERN_INFO "Handling flashing red mode\n"); // temp
     light->status.red = !light->status.red; // toggle red light
     light->status.yellow = false;
     light->status.green = false;
@@ -137,6 +142,7 @@ void handle_flashing_red(traffic_light_t *light) {
 }
 
 void handle_flashing_yellow(traffic_light_t *light) {
+    printk(KERN_INFO "Handling flashing yellow mode\n"); // temp
     light->status.yellow = !light->status.yellow; // toggle yellow light
     light->status.red = false;
     light->status.green = false;
@@ -147,11 +153,13 @@ void handle_flashing_yellow(traffic_light_t *light) {
 void handle_pedestrian_mode(traffic_light_t *light) {
     // if in pedestrian mode & red light is on, keep red and yellow on for 5 cycles instead of 2 cycles
     // otherwise, resume normal mode (after timer expiration) until stop phase (red light on) in reached
+    printk(KERN_INFO "Handling pedestrian mode\n"); // temp
     if (light->status.red) {
         light->status.yellow = true;
         light->status.green = false;
         mod_timer(&light->timer, jiffies + (5 * HZ / light->cycle_rate)); // red/yellow for 5 cycle
         light->pedestrian_present = false; // clear pedestrian present flag after successfully handling pedestrian mode
+        set_light_status(light); // update GPIOs based on current light status
     }
     // else, let current timer expire to return to normal mode
 }
