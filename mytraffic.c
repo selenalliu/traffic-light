@@ -62,22 +62,26 @@ MODULE_DESCRIPTION("Traffic light kernel module");
 #define GREEN 44
 #define BTN_0 26	// Mode switch button
 #define BTN_1 46	// Pedestrian call button
-#define MAJOR 61
+#define MYTRAFFIC_MAJOR 61
 
 /* ======================= Global variables ======================= */
 unsigned int btn_0_irq; // IRQ number for button 0
 unsigned int btn_1_irq; // IRQ number for button 1
+bool btn_0_pressed = false; // flag for button 0 press (mode switch)
+bool btn_1_pressed = false; // flag for button 1 press (pedestrian call)
 
 typedef enum {
     NORMAL_MODE,
     FLASHING_RED,
-    FLASHING_YELLOW
+    FLASHING_YELLOW,
+    PEDESTRIAN_MODE,
+    LIGHTBULB_CHECK
 } opmode_t;
 
 typedef enum {
     EVENT_BTN_0_PRESS,
-    // EVENT_BTN_1_PRESS,
-    // EVENT_BOTH_BUTTONS_PRESS,
+    EVENT_BTN_1_PRESS,
+    EVENT_BOTH_BTNS_PRESS,
     EVENT_TIMER_EXPIRE
 } event_t;
 
@@ -94,10 +98,12 @@ typedef struct {
     bool pedestrian_present;
 } traffic_light_t;
 
-opmode_t state_transition_table[2][3] = { // current mode vs. event
-                        /* NORMAL_MODE       FLASHING_RED      FLASHING_YELLOW */
-    /* EVENT_BTN_0_PRESS */ {FLASHING_RED,   FLASHING_YELLOW,    NORMAL_MODE},
-    /* EVENT_TIMER_EXPIRE */ {NORMAL_MODE,   FLASHING_RED,   FLASHING_YELLOW}
+mode_t state_transition_table[4][5] = { // current mode vs. event
+                        /* NORMAL_MODE       FLASHING_RED      FLASHING_YELLOW      PEDESTRIAN_MODE     LIGHTBULB_CHECK*/
+    /* EVENT_BTN_0_PRESS */ {FLASHING_RED,   FLASHING_YELLOW,    NORMAL_MODE,   PEDESTRIAN_MODE,    NORMAL_MODE},
+    /* EVENT_BTN_1_PRESS */ {PEDESTRIAN_MODE,  FLASHING_RED,  FLASHING_YELLOW,   PEDESTRIAN_MODE,   NORMAL_MODE}, // only go to pedestrian mode from normal
+    /* EVENT_BOTH_BTNS_PRESS */ {LIGHTBULB_CHECK,   LIGHTBULB_CHECK,    LIGHTBULB_CHECK,    LIGHTBULB_CHECK,    LIGHTBULB_CHECK},
+    /* EVENT_TIMER_EXPIRE */ {NORMAL_MODE,   FLASHING_RED,   FLASHING_YELLOW,   NORMAL_MODE,    LIGHTBULB_CHECK} // pedestrian mode will return to normal after timer expires, lightbulb check ignores any existing timers/their expirations
 };
 
 /* ======================= Function Declarations/Definitions ======================= */
@@ -106,11 +112,12 @@ void set_light_status(traffic_light_t *light); // helper function to set GPIOs b
 
 // state handlers
 void handle_normal_mode(traffic_light_t *light) {
+    printk(KERN_INFO "Handling normal mode\n"); // temp
     if (light->status.green) {
         light->status.green = false;
         light->status.yellow = true;
         mod_timer(&light->timer, jiffies + (HZ / light->cycle_rate)); // yellow for 1 cycle
-    } else if (light->status.yellow) {
+    } else if (light->status.yellow && !light->pedestrian_present) { // switch to red only if no pedestrian is present
         light->status.yellow = false;
         light->status.red = true;
         mod_timer(&light->timer, jiffies + (2 * HZ / light->cycle_rate)); // red for 2 cycles
@@ -118,11 +125,15 @@ void handle_normal_mode(traffic_light_t *light) {
         light->status.red = false;
         light->status.green = true;
         mod_timer(&light->timer, jiffies + (3 * HZ / light->cycle_rate)); // green for 3 cycles
+    } else if (!light->status.red && !light->status.yellow && !light->status.green) { // all lights are off when switching modes
+        light->status.green = true; // default to green
+        mod_timer(&light->timer, jiffies + (3 * HZ / light->cycle_rate));
     }
     set_light_status(light); // update GPIOs based on current light status
 }
 
 void handle_flashing_red(traffic_light_t *light) {
+    printk(KERN_INFO "Handling flashing red mode\n"); // temp
     light->status.red = !light->status.red; // toggle red light
     light->status.yellow = false;
     light->status.green = false;
@@ -131,6 +142,7 @@ void handle_flashing_red(traffic_light_t *light) {
 }
 
 void handle_flashing_yellow(traffic_light_t *light) {
+    printk(KERN_INFO "Handling flashing yellow mode\n"); // temp
     light->status.yellow = !light->status.yellow; // toggle yellow light
     light->status.red = false;
     light->status.green = false;
@@ -138,17 +150,46 @@ void handle_flashing_yellow(traffic_light_t *light) {
     set_light_status(light);
 }
 
+void handle_pedestrian_mode(traffic_light_t *light) {
+    // if in pedestrian mode & red light is on, keep red and yellow on for 5 cycles instead of 2 cycles
+    // otherwise, resume normal mode (after timer expiration) until stop phase (red light on) in reached
+    printk(KERN_INFO "Handling pedestrian mode\n"); // temp
+    if (light->status.yellow) {
+        light->status.red = true;
+        light->status.green = false;
+        mod_timer(&light->timer, jiffies + (5 * HZ / light->cycle_rate)); // red/yellow for 5 cycle
+        light->pedestrian_present = false; // clear pedestrian present flag after successfully handling pedestrian mode
+        set_light_status(light); // update GPIOs based on current light status
+        light->status.red = false; // reset red & yellow lights for return to normal mode
+        light->status.yellow = false;
+    }
+    // else, let current timer expire to return to normal mode
+}
+
 void handle_lightbulb_check(traffic_light_t *light) {
     // turn on all lights for lightbulb check
     light->status.red = true;
     light->status.yellow = true;
     light->status.green = true;
-    mod_timer(&light->timer, jiffies + (5 * HZ / light->cycle_rate)); // 5 cycles for lightbulb check
     set_light_status(light);
+    light->cycle_rate = 1; // reset cycle rate to 1 Hz
+    light->status.red = false;
+    light->status.yellow = false;
 }
 void handle_event(traffic_light_t *light, event_t event) {
     opmode_t next_mode = state_transition_table[event][light->mode]; // get next mode based on current mode and event
+    
+    // for pedestrian mode
+    if (light->pedestrian_present && light->status.yellow) {
+        next_mode = PEDESTRIAN_MODE; // if pedestrian present & and about to enter "stop" phase, force to pedestrian mode
+    }
     light->mode = next_mode; // update mode
+
+    if (event == EVENT_BTN_1_PRESS && (light->mode == FLASHING_RED || light->mode == FLASHING_YELLOW)) {
+        // if pedestrian button is pressed while in flashing mode, don't do anything (don't call handler again) to prevent light jittering
+        return;
+    }
+
     switch (next_mode) {
         case NORMAL_MODE:
             handle_normal_mode(light);
@@ -158,6 +199,13 @@ void handle_event(traffic_light_t *light, event_t event) {
             break;
         case FLASHING_YELLOW:
             handle_flashing_yellow(light);
+            break;
+        case PEDESTRIAN_MODE:
+            light->pedestrian_present = true; // set pedestrian present flag
+            handle_pedestrian_mode(light);
+            break;
+        case LIGHTBULB_CHECK:
+            handle_lightbulb_check(light);
             break;
     }
 };
@@ -172,7 +220,7 @@ static irqreturn_t btn_0_irq_handler(int irq, void *dev_id) {
 static irqreturn_t btn_1_irq_handler(int irq, void *dev_id) {
     // handle pedestrian call button press (BTN1)
     traffic_light_t *light = (traffic_light_t *)dev_id; // get light status from dev_id
-    // handle_event(light, EVENT_BTN_1_PRESS);
+    handle_event(light, EVENT_BTN_1_PRESS);
     return IRQ_HANDLED;
 }
 
@@ -196,19 +244,20 @@ static struct file_operations mytraffic_fops = {
 };
 
 static int mytraffic_init(void) {
+    traffic_light_t *light;
     // register char device
     int result;
-    result = register_chrdev(MAJOR, "mytraffic", &mytraffic_fops);
+    result = register_chrdev(MYTRAFFIC_MAJOR, "mytraffic", &mytraffic_fops);
     if (result < 0) {
         printk(KERN_ERR "Failed to register char device\n");
         return result;
     }
 
-    traffic_light_t *light = kmalloc(sizeof(traffic_light_t), GFP_KERNEL); // allocate memory for traffic light struct
+    light = kmalloc(sizeof(traffic_light_t), GFP_KERNEL); // allocate memory for traffic light struct
     if (!light) {
         printk(KERN_ERR "Failed to allocate memory for traffic light struct\n");
         kfree(light);
-        unregister_chrdev(MAJOR, "mytraffic");
+        unregister_chrdev(MYTRAFFIC_MAJOR, "mytraffic");
         return -ENOMEM;
     }
     
@@ -216,7 +265,7 @@ static int mytraffic_init(void) {
     if (gpio_init(light) < 0) {
         printk(KERN_ERR "Failed to initialize GPIOs\n");
         kfree(light);
-        unregister_chrdev(MAJOR, "mytraffic");
+        unregister_chrdev(MYTRAFFIC_MAJOR, "mytraffic");
         return -1;
     }
 
@@ -244,17 +293,17 @@ static void mytraffic_exit(void) {
     gpio_free(RED);
 
     // unregister char device
-    unregister_chrdev(MAJOR, "mytraffic");
+    unregister_chrdev(MYTRAFFIC_MAJOR, "mytraffic");
 }
 
 static int gpio_init(traffic_light_t *light) {
+    int result = 0; // for error checking
+
     if (!light) {
         printk(KERN_ERR "Invalid traffic light pointer\n");
         return -1;
     }
     
-    int result = 0; // for error checking
-
     // set up RED GPIO
     if (gpio_request(RED, "RED")) {
         printk(KERN_ERR "Failed to allocate GPIO %d\n", RED);
