@@ -26,6 +26,7 @@ static const struct modversion_info ____versions[]
 __used
 __attribute__((section("__versions"))) = {
 	{ 0xa16cf51b, "module_layout" },
+	{ 0x3af2c978, "gpiod_get_raw_value" },
 	{ 0xb8f3845c, "gpiod_set_raw_value" },
 	{ 0x6bc3fbc0, "__unregister_chrdev" },
 	{ 0x37a0cba, "kfree" },
