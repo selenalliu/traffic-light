@@ -67,8 +67,6 @@ MODULE_DESCRIPTION("Traffic light kernel module");
 /* ======================= Global variables ======================= */
 unsigned int btn_0_irq; // IRQ number for button 0
 unsigned int btn_1_irq; // IRQ number for button 1
-bool btn_0_pressed = false; // flag for button 0 press (mode switch)
-bool btn_1_pressed = false; // flag for button 1 press (pedestrian call)
 
 typedef enum {
     NORMAL_MODE,
@@ -98,7 +96,7 @@ typedef struct {
     bool pedestrian_present;
 } traffic_light_t;
 
-mode_t state_transition_table[4][5] = { // current mode vs. event
+opmode_t state_transition_table[4][5] = { // current mode vs. event
                         /* NORMAL_MODE       FLASHING_RED      FLASHING_YELLOW      PEDESTRIAN_MODE     LIGHTBULB_CHECK*/
     /* EVENT_BTN_0_PRESS */ {FLASHING_RED,   FLASHING_YELLOW,    NORMAL_MODE,   PEDESTRIAN_MODE,    NORMAL_MODE},
     /* EVENT_BTN_1_PRESS */ {PEDESTRIAN_MODE,  FLASHING_RED,  FLASHING_YELLOW,   PEDESTRIAN_MODE,   NORMAL_MODE}, // only go to pedestrian mode from normal
@@ -157,9 +155,10 @@ void handle_pedestrian_mode(traffic_light_t *light) {
     if (light->status.yellow) {
         light->status.red = true;
         light->status.green = false;
-        mod_timer(&light->timer, jiffies + (5 * HZ / light->cycle_rate)); // red/yellow for 5 cycle
         light->pedestrian_present = false; // clear pedestrian present flag after successfully handling pedestrian mode
         set_light_status(light); // update GPIOs based on current light status
+        mod_timer(&light->timer, jiffies + (5 * HZ / light->cycle_rate)); // red/yellow for 5 cycle
+
         light->status.red = false; // reset red & yellow lights for return to normal mode
         light->status.yellow = false;
     }
@@ -172,9 +171,16 @@ void handle_lightbulb_check(traffic_light_t *light) {
     light->status.yellow = true;
     light->status.green = true;
     set_light_status(light);
-    light->cycle_rate = 1; // reset cycle rate to 1 Hz
-    light->status.red = false;
-    light->status.yellow = false;
+    if (!gpio_get_value(BTN_0) && !gpio_get_value(BTN_1)) { // if both buttons are released
+        light->cycle_rate = 1; // reset cycle rate to 1 Hz
+        light->status.red = false;
+        light->status.yellow = false;
+        light->mode = NORMAL_MODE; // reset mode to normal
+        set_light_status(light); // update lights
+        mod_timer(&light->timer, jiffies + (3 * HZ / light->cycle_rate)); // reset timer for normal mode
+        return;
+    }
+    mod_timer(&light->timer, jiffies + msecs_to_jiffies(10)); // set timer to check every 10 ms for button release
 }
 void handle_event(traffic_light_t *light, event_t event) {
     opmode_t next_mode = state_transition_table[event][light->mode]; // get next mode based on current mode and event
@@ -205,22 +211,51 @@ void handle_event(traffic_light_t *light, event_t event) {
             handle_pedestrian_mode(light);
             break;
         case LIGHTBULB_CHECK:
+            light->pedestrian_present = false; // clear pedestrian present flag
             handle_lightbulb_check(light);
             break;
     }
 };
 
+static unsigned long last_btn_0_irq_time = 0;
+
 static irqreturn_t btn_0_irq_handler(int irq, void *dev_id) {
     // handle mode switch button press (BTN0)
     traffic_light_t *light = (traffic_light_t *)dev_id; // get light status from dev_id
-    handle_event(light, EVENT_BTN_0_PRESS);
+    unsigned long current_time = jiffies;
+
+    // button debounce (ignore interrupts occurring within 50ms of each other)
+    if (current_time < last_btn_0_irq_time + msecs_to_jiffies(50)) {
+        return IRQ_HANDLED;
+    }
+    last_btn_0_irq_time = current_time;
+
+    if (gpio_get_value(BTN_1)) { // check if BTN1 is pressed
+        handle_event(light, EVENT_BOTH_BTNS_PRESS); // both buttons pressed
+    } else {
+        handle_event(light, EVENT_BTN_0_PRESS); // only BTN0 pressed
+    }
     return IRQ_HANDLED;
 }
+
+static unsigned long last_btn_1_irq_time = 0;
 
 static irqreturn_t btn_1_irq_handler(int irq, void *dev_id) {
     // handle pedestrian call button press (BTN1)
     traffic_light_t *light = (traffic_light_t *)dev_id; // get light status from dev_id
-    handle_event(light, EVENT_BTN_1_PRESS);
+    unsigned long current_time = jiffies;
+
+    // button debounce
+    if (current_time < last_btn_1_irq_time + msecs_to_jiffies(50)) {
+        return IRQ_HANDLED;
+    }
+    last_btn_1_irq_time = current_time;
+
+    if (gpio_get_value(BTN_0)) { // check if BTN0 is pressed
+        handle_event(light, EVENT_BOTH_BTNS_PRESS); // both buttons pressed
+    } else {
+        handle_event(light, EVENT_BTN_1_PRESS); // only BTN1 pressed
+    }
     return IRQ_HANDLED;
 }
 
@@ -272,12 +307,12 @@ static int mytraffic_init(void) {
     // initialize traffic light struct
     light->mode = NORMAL_MODE; // start in normal mode
     light->cycle_rate = 1; // default cycle rate (1 Hz)
-    light->status.red = false; // start with all lights off
+    light->status.red = true; // start with red light "on" to trigger green
     light->status.yellow = false;
-    light->status.green = true; // start with green on (normal mode)
+    light->status.green = false; // 
     light->pedestrian_present = false; // no pedestrian by default
     timer_setup(&light->timer, mytraffic_timer_callback, 0); // initialize timer with callback
-    mod_timer(&light->timer, jiffies + (3 * HZ / light->cycle_rate)); // start the timer for the first instance of normal mode (3 cycles of green)
+    mod_timer(&light->timer, jiffies + (2 * HZ / light->cycle_rate)); // start the timer
 
     return 0;
 }
@@ -387,7 +422,6 @@ void set_light_status(traffic_light_t *light) {
     gpio_set_value(RED, light->status.red ? 1 : 0);
     gpio_set_value(YELLOW, light->status.yellow ? 1 : 0);
     gpio_set_value(GREEN, light->status.green ? 1 : 0);
-
 }
 
 module_init(mytraffic_init);
