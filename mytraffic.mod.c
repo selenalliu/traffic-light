@@ -28,6 +28,7 @@ __attribute__((section("__versions"))) = {
 	{ 0xa16cf51b, "module_layout" },
 	{ 0x3af2c978, "gpiod_get_raw_value" },
 	{ 0xb8f3845c, "gpiod_set_raw_value" },
+	{ 0x97934ecf, "del_timer_sync" },
 	{ 0x6bc3fbc0, "__unregister_chrdev" },
 	{ 0x37a0cba, "kfree" },
 	{ 0xfe990052, "gpio_free" },
@@ -46,7 +47,14 @@ __attribute__((section("__versions"))) = {
 	{ 0xb44e414c, "kmalloc_caches" },
 	{ 0x1f6e82a4, "__register_chrdev" },
 	{ 0x2196324, "__aeabi_idiv" },
+	{ 0xf4fa543b, "arm_copy_to_user" },
+	{ 0x91715312, "sprintf" },
 	{ 0x2e5810c6, "__aeabi_unwind_cpp_pr1" },
+	{ 0xdb7305a1, "__stack_chk_fail" },
+	{ 0x20c55ae0, "sscanf" },
+	{ 0x28cc25db, "arm_copy_from_user" },
+	{ 0x88db9f48, "__check_object_size" },
+	{ 0x8f678b07, "__stack_chk_guard" },
 	{ 0xb1ad28e0, "__gnu_mcount_nc" },
 };
 

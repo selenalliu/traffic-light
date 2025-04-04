@@ -67,7 +67,6 @@ MODULE_DESCRIPTION("Traffic light kernel module");
 /* ======================= Global variables ======================= */
 unsigned int btn_0_irq; // IRQ number for button 0
 unsigned int btn_1_irq; // IRQ number for button 1
-
 typedef enum {
     NORMAL_MODE,
     FLASHING_RED,
@@ -95,6 +94,8 @@ typedef struct {
     int cycle_rate; // in Hz
     bool pedestrian_present;
 } traffic_light_t;
+
+traffic_light_t *light; // pointer to traffic light struct, global for read/write access
 
 opmode_t state_transition_table[4][5] = { // current mode vs. event
                         /* NORMAL_MODE       FLASHING_RED      FLASHING_YELLOW      PEDESTRIAN_MODE     LIGHTBULB_CHECK*/
@@ -155,12 +156,8 @@ void handle_pedestrian_mode(traffic_light_t *light) {
     if (light->status.yellow) {
         light->status.red = true;
         light->status.green = false;
-        light->pedestrian_present = false; // clear pedestrian present flag after successfully handling pedestrian mode
+        mod_timer(&light->timer, jiffies + (5 * HZ / light->cycle_rate)); // red/yellow for 5 cycles
         set_light_status(light); // update GPIOs based on current light status
-        mod_timer(&light->timer, jiffies + (5 * HZ / light->cycle_rate)); // red/yellow for 5 cycle
-
-        light->status.red = false; // reset red & yellow lights for return to normal mode
-        light->status.yellow = false;
     }
     // else, let current timer expire to return to normal mode
 }
@@ -176,8 +173,8 @@ void handle_lightbulb_check(traffic_light_t *light) {
         light->status.red = false;
         light->status.yellow = false;
         light->mode = NORMAL_MODE; // reset mode to normal
-        set_light_status(light); // update lights
         mod_timer(&light->timer, jiffies + (3 * HZ / light->cycle_rate)); // reset timer for normal mode
+        set_light_status(light); // update lights
         return;
     }
     mod_timer(&light->timer, jiffies + msecs_to_jiffies(10)); // set timer to check every 10 ms for button release
@@ -186,8 +183,14 @@ void handle_event(traffic_light_t *light, event_t event) {
     opmode_t next_mode = state_transition_table[event][light->mode]; // get next mode based on current mode and event
     
     // for pedestrian mode
-    if (light->pedestrian_present && light->status.yellow) {
+    if (light->pedestrian_present && light->status.yellow && !light->status.red) {
         next_mode = PEDESTRIAN_MODE; // if pedestrian present & and about to enter "stop" phase, force to pedestrian mode
+    }
+
+    if (light->pedestrian_present && light->status.red && light->status.yellow) {
+        light->status.red = false; // reset red & yellow lights for return to normal mode
+        light->status.yellow = false;
+        light->pedestrian_present = false; // clear pedestrian present flag
     }
     light->mode = next_mode; // update mode
 
@@ -221,7 +224,6 @@ static unsigned long last_btn_0_irq_time = 0;
 
 static irqreturn_t btn_0_irq_handler(int irq, void *dev_id) {
     // handle mode switch button press (BTN0)
-    traffic_light_t *light = (traffic_light_t *)dev_id; // get light status from dev_id
     unsigned long current_time = jiffies;
 
     // button debounce (ignore interrupts occurring within 50ms of each other)
@@ -242,7 +244,6 @@ static unsigned long last_btn_1_irq_time = 0;
 
 static irqreturn_t btn_1_irq_handler(int irq, void *dev_id) {
     // handle pedestrian call button press (BTN1)
-    traffic_light_t *light = (traffic_light_t *)dev_id; // get light status from dev_id
     unsigned long current_time = jiffies;
 
     // button debounce
@@ -260,16 +261,71 @@ static irqreturn_t btn_1_irq_handler(int irq, void *dev_id) {
 }
 
 static void mytraffic_timer_callback(struct timer_list *t) {
-    traffic_light_t *light = from_timer(light, t, timer);
     handle_event(light, EVENT_TIMER_EXPIRE);
 }
 
-static ssize_t mytraffic_read(struct file *file, char __user *buf, size_t count, loff_t *offset) {
+static ssize_t mytraffic_read(struct file *filp, char *buf, size_t count, loff_t *f_pos) {
+    char tbuf[256], *tbptr = tbuf;
+    size_t len; 
 
+    if (*f_pos > 0) {
+        return 0; // no more data to read
+    }
+
+    // print current mode, cycle rate, light status, and pedestrian presence to kernel buffer
+    tbptr += sprintf(tbptr, "Operational mode: %s\n",
+        light->mode == NORMAL_MODE ? "normal" : 
+        light->mode == FLASHING_RED ? "flashing-red" : 
+        light->mode == FLASHING_YELLOW ? "flashing-yellow" : 
+        light->mode == PEDESTRIAN_MODE ? "pedestrian-mode" : "lightbulb-check");
+    tbptr += sprintf(tbptr, "Cycle rate: %d Hz\n", light->cycle_rate);
+    tbptr += sprintf(tbptr, "Red status: %s\n", light->status.red ? "on" : "off");
+    tbptr += sprintf(tbptr, "Yellow status: %s\n", light->status.yellow ? "on" : "off");
+    tbptr += sprintf(tbptr, "Green status: %s\n", light->status.green ? "on" : "off");
+    tbptr += sprintf(tbptr, "Pedestrian present?: %s\n", light->pedestrian_present ? "yes" : "no");
+
+    len = tbptr - tbuf; // length of string in temporary buffer
+
+    // limit count to prevent buffer overflows
+    if (count > len - *f_pos) {
+        count = len - *f_pos;
+    }
+
+    // copy to user, check for errors
+    if (copy_to_user(buf, tbuf + *f_pos, count)) {
+        return -EFAULT;
+    }
+
+    *f_pos += count; // increment file position
+    return count;
 }
 
-static ssize_t mytraffic_write(struct file *file, const char __user *buf, size_t count, loff_t *offset) {
+static ssize_t mytraffic_write(struct file *filp, const char *buf, size_t count, loff_t *f_pos) {
+    char kbuf[256];
+    int new_rate;
 
+    if (count > sizeof(kbuf) - 1) {
+        return -1;
+    }
+
+    if (copy_from_user(kbuf, buf, count)) {
+        return -EFAULT;
+    }
+
+    kbuf[count] = '\0'; // null terminate string
+
+    if (sscanf(kbuf, "%d", &new_rate) == 1) { // check for valid input
+        if (new_rate < 1 || new_rate > 9) {
+            return -1; // invalid cycle rate
+        } else {
+            light->cycle_rate = new_rate; // set new cycle rate
+            // mod_timer(&light->timer, jiffies + (HZ / light->cycle_rate)); // reset timer with new cycle rate
+            return count;
+        }
+    } 
+
+    // otherwise invalid input
+    return -1;
 }
 
 static struct file_operations mytraffic_fops = {
@@ -279,7 +335,6 @@ static struct file_operations mytraffic_fops = {
 };
 
 static int mytraffic_init(void) {
-    traffic_light_t *light;
     // register char device
     int result;
     result = register_chrdev(MYTRAFFIC_MAJOR, "mytraffic", &mytraffic_fops);
@@ -326,6 +381,12 @@ static void mytraffic_exit(void) {
     gpio_free(GREEN);
     gpio_free(YELLOW);
     gpio_free(RED);
+    
+    // free timer
+    del_timer_sync(&light->timer); // ensure timer is fully stopped
+
+    // free traffic light struct
+    kfree(light);
 
     // unregister char device
     unregister_chrdev(MYTRAFFIC_MAJOR, "mytraffic");
